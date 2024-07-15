@@ -6,7 +6,7 @@ use crate::{
     execute_command, get_single_selection,
     picker::Preview,
     session::{create_sessions, SessionContainer},
-    tmux::Tmux,
+    :mux::Tmux,
     Result, TmsError,
 };
 use clap::{Args, Command, CommandFactory, Parser, Subcommand};
@@ -42,6 +42,8 @@ pub enum CliCommand {
     #[command(arg_required_else_help = true)]
     /// Rename the active session and the working directory
     Rename(RenameCommand),
+    /// Rename the active session and the working directory
+    Rename(DetatchCommand),
     /// Creates new worktree windows for the selected session
     Refresh(RefreshCommand),
     /// Clone repository into the first search path and create a new session for it
@@ -98,6 +100,15 @@ pub struct ConfigCommand {
     #[arg(long, value_name = "Alphabetical | LastAttached")]
     /// Set the sort order of the sessions in the switch command
     session_sort_order: Option<SessionSortOrderConfig>,
+}
+
+#[derive(Debug, Args)]
+pub struct DetatchCommand {
+    #[arg(long, short)]
+    /// Delete instead of add a bookmark
+    is_detatched: bool,
+    /// Path to socket
+    socket: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -178,6 +189,13 @@ impl Cli {
                 rename_subcommand(args, tmux)?;
                 Ok(SubCommandGiven::Yes)
             }
+
+            // Clean and detatch from current session
+            Some(CliCommand::Rename(args)) => {
+                detatch_subcommand(args, tmux)?;
+                Ok(SubCommandGiven::Yes)
+            }
+
             Some(CliCommand::Refresh(args)) => {
                 refresh_command(args, tmux)?;
                 Ok(SubCommandGiven::Yes)
@@ -474,6 +492,226 @@ fn sessions_subcommand(tmux: &Tmux) -> Result<()> {
 
 fn rename_subcommand(args: &RenameCommand, tmux: &Tmux) -> Result<()> {
     let new_session_name = &args.name;
+
+    let current_session = tmux.display_message("'#S'");
+    let current_session = current_session.trim();
+
+    let panes = tmux.list_windows(
+        "'#{window_index}.#{pane_index},#{pane_current_command},#{pane_current_path}'",
+        None,
+    );
+
+    let mut paneid_to_pane_deatils: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let all_panes: Vec<String> = panes
+        .trim()
+        .split('\n')
+        .map(|window| {
+            let mut _window: Vec<&str> = window.split(',').collect();
+
+            let pane_index = _window[0];
+            let pane_details: HashMap<String, String> = HashMap::from([
+                (String::from("command"), _window[1].to_string()),
+                (String::from("cwd"), _window[2].to_string()),
+            ]);
+
+            paneid_to_pane_deatils.insert(pane_index.to_string(), pane_details);
+
+            _window[0].to_string()
+        })
+        .collect();
+
+    let first_pane_details = &paneid_to_pane_deatils[all_panes.first().unwrap()];
+
+    let new_session_path: String =
+        String::from(&first_pane_details["cwd"]).replace(current_session, new_session_name);
+
+    let move_command_args: Vec<String> =
+        [first_pane_details["cwd"].clone(), new_session_path.clone()].to_vec();
+    execute_command("mv", move_command_args);
+
+    for pane_index in all_panes.iter() {
+        let pane_details = &paneid_to_pane_deatils[pane_index];
+
+        let old_path = &pane_details["cwd"];
+        let new_path = old_path.replace(current_session, new_session_name);
+
+        let change_dir_cmd = format!("\"cd {new_path}\"");
+        tmux.send_keys(&change_dir_cmd, Some(pane_index));
+    }
+
+    tmux.rename_session(new_session_name);
+    tmux.attach_session(None, Some(&new_session_path));
+
+    Ok(())
+}
+
+fn rename_subcommand(args: &RenameCommand, tmux: &Tmux) -> Result<()> {
+    let new_session_name = &args.name;
+
+    let current_session = tmux.display_message("'#S'");
+    let current_session = current_session.trim();
+
+    let panes = tmux.list_windows(
+        "'#{window_index}.#{pane_index},#{pane_current_command},#{pane_current_path}'",
+        None,
+    );
+
+    let mut paneid_to_pane_deatils: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let all_panes: Vec<String> = panes
+        .trim()
+        .split('\n')
+        .map(|window| {
+            let mut _window: Vec<&str> = window.split(',').collect();
+
+            let pane_index = _window[0];
+            let pane_details: HashMap<String, String> = HashMap::from([
+                (String::from("command"), _window[1].to_string()),
+                (String::from("cwd"), _window[2].to_string()),
+            ]);
+
+            paneid_to_pane_deatils.insert(pane_index.to_string(), pane_details);
+
+            _window[0].to_string()
+        })
+        .collect();
+
+    let first_pane_details = &paneid_to_pane_deatils[all_panes.first().unwrap()];
+
+    let new_session_path: String =
+        String::from(&first_pane_details["cwd"]).replace(current_session, new_session_name);
+
+    let move_command_args: Vec<String> =
+        [first_pane_details["cwd"].clone(), new_session_path.clone()].to_vec();
+    execute_command("mv", move_command_args);
+
+    for pane_index in all_panes.iter() {
+        let pane_details = &paneid_to_pane_deatils[pane_index];
+
+        let old_path = &pane_details["cwd"];
+        let new_path = old_path.replace(current_session, new_session_name);
+
+        let change_dir_cmd = format!("\"cd {new_path}\"");
+        tmux.send_keys(&change_dir_cmd, Some(pane_index));
+    }
+
+    tmux.rename_session(new_session_name);
+    tmux.attach_session(None, Some(&new_session_path));
+
+    Ok(())
+}
+
+fn rename_subcommand(args: &RenameCommand, tmux: &Tmux) -> Result<()> {
+    let new_session_name = &args.name;
+
+    let current_session = tmux.display_message("'#S'");
+    let current_session = current_session.trim();
+
+    let panes = tmux.list_windows(
+        "'#{window_index}.#{pane_index},#{pane_current_command},#{pane_current_path}'",
+        None,
+    );
+
+    let mut paneid_to_pane_deatils: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let all_panes: Vec<String> = panes
+        .trim()
+        .split('\n')
+        .map(|window| {
+            let mut _window: Vec<&str> = window.split(',').collect();
+
+            let pane_index = _window[0];
+            let pane_details: HashMap<String, String> = HashMap::from([
+                (String::from("command"), _window[1].to_string()),
+                (String::from("cwd"), _window[2].to_string()),
+            ]);
+
+            paneid_to_pane_deatils.insert(pane_index.to_string(), pane_details);
+
+            _window[0].to_string()
+        })
+        .collect();
+
+    let first_pane_details = &paneid_to_pane_deatils[all_panes.first().unwrap()];
+
+    let new_session_path: String =
+        String::from(&first_pane_details["cwd"]).replace(current_session, new_session_name);
+
+    let move_command_args: Vec<String> =
+        [first_pane_details["cwd"].clone(), new_session_path.clone()].to_vec();
+    execute_command("mv", move_command_args);
+
+    for pane_index in all_panes.iter() {
+        let pane_details = &paneid_to_pane_deatils[pane_index];
+
+        let old_path = &pane_details["cwd"];
+        let new_path = old_path.replace(current_session, new_session_name);
+
+        let change_dir_cmd = format!("\"cd {new_path}\"");
+        tmux.send_keys(&change_dir_cmd, Some(pane_index));
+    }
+
+    tmux.rename_session(new_session_name);
+    tmux.attach_session(None, Some(&new_session_path));
+
+    Ok(())
+}
+
+fn rename_subcommand(args: &RenameCommand, tmux: &Tmux) -> Result<()> {
+    let new_session_name = &args.name;
+
+    let current_session = tmux.display_message("'#S'");
+    let current_session = current_session.trim();
+
+    let panes = tmux.list_windows(
+        "'#{window_index}.#{pane_index},#{pane_current_command},#{pane_current_path}'",
+        None,
+    );
+
+    let mut paneid_to_pane_deatils: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let all_panes: Vec<String> = panes
+        .trim()
+        .split('\n')
+        .map(|window| {
+            let mut _window: Vec<&str> = window.split(',').collect();
+
+            let pane_index = _window[0];
+            let pane_details: HashMap<String, String> = HashMap::from([
+                (String::from("command"), _window[1].to_string()),
+                (String::from("cwd"), _window[2].to_string()),
+            ]);
+
+            paneid_to_pane_deatils.insert(pane_index.to_string(), pane_details);
+
+            _window[0].to_string()
+        })
+        .collect();
+
+    let first_pane_details = &paneid_to_pane_deatils[all_panes.first().unwrap()];
+
+    let new_session_path: String =
+        String::from(&first_pane_details["cwd"]).replace(current_session, new_session_name);
+
+    let move_command_args: Vec<String> =
+        [first_pane_details["cwd"].clone(), new_session_path.clone()].to_vec();
+    execute_command("mv", move_command_args);
+
+    for pane_index in all_panes.iter() {
+        let pane_details = &paneid_to_pane_deatils[pane_index];
+
+        let old_path = &pane_details["cwd"];
+        let new_path = old_path.replace(current_session, new_session_name);
+
+        let change_dir_cmd = format!("\"cd {new_path}\"");
+        tmux.send_keys(&change_dir_cmd, Some(pane_index));
+    }
+
+    tmux.rename_session(new_session_name);
+    tmux.attach_session(None, Some(&new_session_path));
+
+    Ok(())
+}
+
+
+fn detatch_subcommand(args: &DetatchCommand, tmux: &Tmux) -> Result<()> {
 
     let current_session = tmux.display_message("'#S'");
     let current_session = current_session.trim();
